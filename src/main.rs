@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
+use druid::kurbo::{Point, Rect, Size};
 use druid::lens::LensWrap;
 use druid::piet::Color;
 use druid::widget::{
     Button, Checkbox, DynLabel, EnvScope, Flex, Label, List, Scroll, TextBox, WidgetExt,
 };
-use druid::{theme, AppLauncher, Data, Env, Lens, LocalizedString, Widget, WindowDesc};
+use druid::{
+    theme, AppLauncher, BaseState, BoxConstraints, Data, Env, Event, EventCtx, LayoutCtx, Lens,
+    LocalizedString, PaintCtx, UpdateCtx, Widget, WidgetPod, WindowDesc,
+};
 
 const LAYOUT_BASE: f64 = 8.0;
 const TOOLBAR_HEIGHT: f64 = LAYOUT_BASE * 6.;
@@ -20,7 +24,7 @@ fn set_header_footer_env(env: &mut Env) {
     env.set(theme::BACKGROUND_LIGHT, Color::rgb(0.3, 0.3, 0.3));
 }
 
-#[derive(Clone, Data, Lens)]
+#[derive(Clone, Data, Lens, Debug)]
 struct TodoItem {
     task: String,
     is_completed: bool,
@@ -35,7 +39,7 @@ impl TodoItem {
     }
 }
 
-#[derive(Clone, Data, Lens)]
+#[derive(Clone, Data, Lens, Debug)]
 struct AppState {
     todos: Arc<Vec<TodoItem>>,
     current_entry: String,
@@ -51,6 +55,43 @@ impl AppState {
             ]),
             current_entry: "".to_string(),
         }
+    }
+}
+
+struct TodoListRoot<T: Data> {
+    inner: WidgetPod<T, Box<dyn Widget<T>>>,
+}
+
+impl<T: Data> TodoListRoot<T> {
+    fn new(inner: impl Widget<T> + 'static) -> Self {
+        Self {
+            inner: WidgetPod::new(inner).boxed(),
+        }
+    }
+}
+
+impl<T: Data + std::fmt::Debug + 'static> Widget<T> for TodoListRoot<T> {
+    fn paint(&mut self, ctx: &mut PaintCtx, _state: &BaseState, data: &T, env: &Env) {
+        self.inner.paint(ctx, data, env);
+    }
+
+    fn layout(&mut self, ctx: &mut LayoutCtx, bc: &BoxConstraints, data: &T, env: &Env) -> Size {
+        let size = self.inner.layout(ctx, bc, data, env);
+        self.inner
+            .set_layout_rect(Rect::from_origin_size(Point::ORIGIN, size));
+        size
+    }
+
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event, data: &mut T, env: &Env) {
+        self.inner.event(ctx, event, data, env);
+    }
+
+    fn update(&mut self, ctx: &mut UpdateCtx, old_data: Option<&T>, new_data: &T, env: &Env) {
+        if !old_data.is_none() {
+            // new_data.save();
+        }
+
+        self.inner.update(ctx, new_data, env);
     }
 }
 
@@ -136,10 +177,12 @@ fn ui_builder() -> impl Widget<AppState> {
             .background(toolbar_color()),
     );
 
-    Flex::column()
-        .with_child(header, 0.)
-        .with_child(todo_list, 1.)
-        .with_child(footer, 0.)
+    TodoListRoot::new(
+        Flex::column()
+            .with_child(header, 0.)
+            .with_child(todo_list, 1.)
+            .with_child(footer, 0.),
+    )
 }
 
 fn get_initial_state() -> AppState {
