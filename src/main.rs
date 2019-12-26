@@ -1,5 +1,8 @@
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use app_dirs::*;
 use druid::kurbo::{Point, Rect, Size};
 use druid::lens::LensWrap;
 use druid::piet::Color;
@@ -9,6 +12,12 @@ use druid::widget::{
 use druid::{
     theme, AppLauncher, BaseState, BoxConstraints, Data, Env, Event, EventCtx, LayoutCtx, Lens,
     LocalizedString, PaintCtx, UpdateCtx, Widget, WidgetPod, WindowDesc,
+};
+use serde::{Deserialize, Serialize};
+
+const APP_INFO: AppInfo = AppInfo {
+    name: "Druid Todos",
+    author: "Ankur Sethi",
 };
 
 const LAYOUT_BASE: f64 = 8.0;
@@ -24,7 +33,20 @@ fn set_header_footer_env(env: &mut Env) {
     env.set(theme::BACKGROUND_LIGHT, Color::rgb(0.3, 0.3, 0.3));
 }
 
-#[derive(Clone, Data, Lens, Debug)]
+fn get_persistent_todos_path() -> String {
+    let app_root_path =
+        app_root(AppDataType::UserConfig, &APP_INFO).expect("could not create data directory");
+    let mut todo_file_path = PathBuf::new();
+    todo_file_path.push(app_root_path);
+    todo_file_path.push("todos.json");
+    String::from(
+        todo_file_path
+            .to_str()
+            .expect("could not get valid path to persist todos"),
+    )
+}
+
+#[derive(Clone, Data, Lens, Debug, Serialize, Deserialize)]
 struct TodoItem {
     task: String,
     is_completed: bool,
@@ -37,6 +59,10 @@ impl TodoItem {
             is_completed,
         }
     }
+}
+
+trait PersistentState {
+    fn save(&self) -> Result<(), ()>;
 }
 
 #[derive(Clone, Data, Lens, Debug)]
@@ -58,6 +84,17 @@ impl AppState {
     }
 }
 
+impl PersistentState for AppState {
+    fn save(&self) -> Result<(), ()> {
+        let todo_file_path = get_persistent_todos_path();
+        let serialized_data =
+            serde_json::to_string(&self.todos).expect("could not serialize todos");
+        fs::write(todo_file_path, serialized_data)
+            .expect("could not write serialized data to file");
+        Ok(())
+    }
+}
+
 struct TodoListRoot<T: Data> {
     inner: WidgetPod<T, Box<dyn Widget<T>>>,
 }
@@ -70,7 +107,7 @@ impl<T: Data> TodoListRoot<T> {
     }
 }
 
-impl<T: Data + std::fmt::Debug + 'static> Widget<T> for TodoListRoot<T> {
+impl<T: Data + PersistentState + std::fmt::Debug + 'static> Widget<T> for TodoListRoot<T> {
     fn paint(&mut self, ctx: &mut PaintCtx, _state: &BaseState, data: &T, env: &Env) {
         self.inner.paint(ctx, data, env);
     }
@@ -88,7 +125,7 @@ impl<T: Data + std::fmt::Debug + 'static> Widget<T> for TodoListRoot<T> {
 
     fn update(&mut self, ctx: &mut UpdateCtx, old_data: Option<&T>, new_data: &T, env: &Env) {
         if !old_data.is_none() {
-            // new_data.save();
+            new_data.save().expect("could not save app data");
         }
 
         self.inner.update(ctx, new_data, env);
@@ -186,5 +223,14 @@ fn ui_builder() -> impl Widget<AppState> {
 }
 
 fn get_initial_state() -> AppState {
-    AppState::default()
+    let todo_file_path = get_persistent_todos_path();
+    let mut app_state = AppState::default();
+
+    if Path::new(&todo_file_path).exists() {
+        let todos_json = fs::read_to_string(todo_file_path).expect("could not read todos file");
+        let todos: Arc<Vec<TodoItem>> = serde_json::from_str(&todos_json).expect("corrupted todos file");
+        app_state.todos = todos;
+    }
+
+    app_state
 }
